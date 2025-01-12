@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Simple-HGN for HGB
 
 
@@ -14,3 +15,6 @@ python run_dist.py --dataset PubMed --batch-size 8192
 * networkx 2.3
 * scikit-learn 0.23.2
 * scipy 1.5.2
+=======
+# hgb-seal
+>>>>>>> 1ed515bafc9fe9c926a1403da76d7ad0fc8e3a14
