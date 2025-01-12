@@ -12,7 +12,6 @@ import numpy as np
 
 from utils.pytorchtools import EarlyStopping
 from utils.data import load_data
-from seal.model import GCN
 from GNN import myGAT
 import dgl
 import os
@@ -34,13 +33,6 @@ def mat2tensor(mat):
     if type(mat) is np.ndarray:
         return torch.from_numpy(mat).type(torch.FloatTensor)
     return sp_to_spt(mat)
-
-
-def edge_to_g(edges: list[tuple[int, int]], num_nodes: int) -> dgl.graph:
-    src, dst = zip(*edges)
-    src = torch.tensor(src, dtype=torch.int64)
-    dst = torch.tensor(dst, dtype=torch.int64)
-    return dgl.add_self_loop(dgl.graph((src, dst), num_nodes=num_nodes))
 
 
 def run_model_DBLP(args):
@@ -110,9 +102,9 @@ def run_model_DBLP(args):
         train_pos, valid_pos = dl.get_train_valid_pos()  # edge_types=[test_edge_type])
         num_classes = args.hidden_dim
         heads = [args.num_heads] * args.num_layers + [args.num_heads]
-        # net = myGAT(g, args.edge_feats, len(dl.links['count'])*2+1, in_dims, args.hidden_dim,\
-        #     num_classes, args.num_layers, heads, F.elu, args.dropout, args.dropout, args.slope, False, 0., decode=args.decoder)
-        net = GCN(args.num_layers, args.hidden_dim)
+        net = myGAT(g, args.edge_feats, len(dl.links['count']) * 2 + 1, in_dims, args.hidden_dim, num_classes,
+                    args.num_layers, heads, F.elu, args.dropout, args.dropout, args.slope, False, 0.,
+                    decode=args.decoder)
         net.to(device)
         optimizer = torch.optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -145,32 +137,15 @@ def run_model_DBLP(args):
             train_neg_head = train_neg_head_full[train_idx[start:start + batch_size]]
             train_pos_tail = train_pos_tail_full[train_idx[start:start + batch_size]]
             train_neg_tail = train_neg_tail_full[train_idx[start:start + batch_size]]
-            r_id = r_id_full[train_idx[start:start+batch_size]]
+            r_id = r_id_full[train_idx[start:start + batch_size]]
             left = np.concatenate([train_pos_head, train_neg_head])
             right = np.concatenate([train_pos_tail, train_neg_tail])
             mid = np.concatenate([r_id, r_id])
-            labels = torch.Tensor(
+            labels = torch.FloatTensor(
                 np.concatenate([np.ones(train_pos_head.shape[0]), np.zeros(train_neg_head.shape[0])])).to(device)
 
-            if step == 0: length_labels_t = len(labels)
-            else: length_labels_t = length_labels_t
-            train_edge_id = []
-            num_nodes = 0
-            for src, dst in zip(train_pos_head, train_pos_tail):
-                train_edge_id.append((int(src), int(dst)))
-                num_nodes = max(num_nodes, src, dst)
-            for src, dst in zip(train_neg_head, train_neg_tail):
-                train_edge_id.append((int(src), int(dst)))
-                num_nodes = max(num_nodes, src, dst)
-            num_nodes = length_labels_t
-            train_g = edge_to_g(train_edge_id, num_nodes).to(device)
-
-            pad_length = num_nodes - len(labels)
-            if pad_length > 0: labels = F.pad(labels, (0, pad_length), mode='constant')
-            logits = net(train_g, labels, left, right)
+            logits = net(features_list, e_feat, left, right, mid)
             logp = F.sigmoid(logits)
-            pad_length = num_nodes - len(logp)
-            if pad_length > 0: logp = F.pad(logp, (0, pad_length), mode='constant')
             train_loss = loss_func(logp, labels)
 
             # autograd
@@ -183,6 +158,7 @@ def run_model_DBLP(args):
             # print training info
             print('Epoch {:05d}, Step{:05d} | Train_Loss: {:.4f} | Time: {:.4f}'.format(epoch, step, train_loss.item(),
                                                                                         t_end - t_start))
+
             t_start = time.time()
             # validation
             net.eval()
@@ -205,32 +181,13 @@ def run_model_DBLP(args):
                 mid = np.concatenate([valid_r_id, valid_r_id])
                 labels = torch.FloatTensor(
                     np.concatenate([np.ones(valid_pos_head.shape[0]), np.zeros(valid_neg_head.shape[0])])).to(device)
-                # labels = labels.to(torch.int)
-
-                if step == 0: length_labels_v = len(labels)
-                else: length_labels_v = length_labels_v
-                valid_edge_id = []
-                num_nodes = 0
-                for src, dst in zip(valid_pos_head, valid_pos_tail):
-                    valid_edge_id.append((int(src), int(dst)))
-                    num_nodes = max(num_nodes, src, dst)
-                for src, dst in zip(valid_neg_head, valid_neg_tail):
-                    valid_edge_id.append((int(src), int(dst)))
-                    num_nodes = max(num_nodes, src, dst)
-                num_nodes = num_nodes + 1
-                valid_g = edge_to_g(valid_edge_id, num_nodes).to(device)
-
-                pad_length = int(num_nodes - len(labels))
-                if pad_length > 0: labels = F.pad(labels, (0, pad_length), mode='constant')
-                logits = net(valid_g, labels, left, right)
+                logits = net(features_list, e_feat, left, right, mid)
                 logp = F.sigmoid(logits)
-                pad_length = int(num_nodes - len(logp))
-                if pad_length > 0: logp = F.pad(logp, (0, pad_length), mode='constant')
                 val_loss = loss_func(logp, labels)
             t_end = time.time()
             # print validation info
-            print('Epoch {:05d}, Step{:05d} | Val_Loss {:.4f} | Time(s) {:.4f}'.format(
-                epoch, step, val_loss.item(), t_end - t_start))
+            print('Epoch {:05d} | Val_Loss {:.4f} | Time(s) {:.4f}'.format(
+                epoch, val_loss.item(), t_end - t_start))
             # early stopping
             early_stopping(val_loss, net)
             if early_stopping.early_stop:
@@ -250,6 +207,9 @@ def run_model_DBLP(args):
             test_neigh, test_label = dl.get_test_neigh()
             test_neigh = test_neigh[test_edge_type]
             test_label = test_label[test_edge_type]
+            # save = np.array([test_neigh[0], test_neigh[1], test_label])
+            # print(save)
+            # np.savetxt(f"{args.dataset}_{test_edge_type}_label.txt", save, fmt="%i")
             if os.path.exists(os.path.join(dl.path, f"{args.dataset}_ini_{test_edge_type}_label.txt")):
                 save = np.loadtxt(os.path.join(dl.path, f"{args.dataset}_ini_{test_edge_type}_label.txt"), dtype=int)
                 test_neigh = [save[0], save[1]]
@@ -262,28 +222,13 @@ def run_model_DBLP(args):
             mid = np.zeros(left.shape[0], dtype=np.int32)
             mid[:] = test_edge_type
             labels = torch.FloatTensor(test_label).to(device)
-
-            num_nodes = 0
-            test_edge_id_2hop = []
-            head_nodes, tail_nodes = test_neigh[0], test_neigh[1]
-            for src, dst, label in zip(head_nodes, tail_nodes, test_label):
-                test_edge_id_2hop.append((src, dst))
-                num_nodes = max(num_nodes, src, dst)
-            num_nodes = num_nodes + 1
-            g = edge_to_g(test_edge_id_2hop, num_nodes).to(device)
-
-            pad_length = int(num_nodes - len(labels))
-            if pad_length > 0: labels = F.pad(labels, (0, pad_length), mode='constant')
-            logits = net(g, labels, left, right)
-            pred = F.sigmoid(logits)
+            logits = net(features_list, e_feat, left, right, mid)
+            pred = F.sigmoid(logits).cpu().numpy()
             edge_list = np.concatenate([left.reshape((1, -1)), right.reshape((1, -1))], axis=0)
             labels = labels.cpu().numpy()
             dl.gen_file_for_evaluate(test_neigh, pred, test_edge_type, file_path=f"{args.dataset}_{args.run}.txt",
                                      flag=first_flag)
             first_flag = False
-            pad_length = int(num_nodes - len(pred))
-            if pad_length > 0: pred = F.pad(pred, (0, pad_length), mode='constant')
-            pred = pred.cpu().numpy()
             res = dl.evaluate(edge_list, pred, labels)
             print(res)
             for k in res:
@@ -297,25 +242,10 @@ def run_model_DBLP(args):
             mid = np.zeros(left.shape[0], dtype=np.int32)
             mid[:] = test_edge_type
             labels = torch.FloatTensor(test_label).to(device)
-
-            test_edge_id_random = []
-            num_nodes = 0
-            head_nodes, tail_nodes = test_neigh[0], test_neigh[1]
-            for src, dst, label in zip(head_nodes, tail_nodes, test_label):
-                test_edge_id_random.append((src, dst))
-                num_nodes = max(num_nodes, src, dst)
-            num_nodes = num_nodes + 1
-            g = edge_to_g(test_edge_id_random, num_nodes).to(device)
-
-            pad_length = int(num_nodes - len(labels))
-            if pad_length > 0: labels = F.pad(labels, (0, pad_length), mode='constant')
-            logits = net(g, labels, left, right)
-            pred = F.sigmoid(logits)
+            logits = net(features_list, e_feat, left, right, mid)
+            pred = F.sigmoid(logits).cpu().numpy()
             edge_list = np.concatenate([left.reshape((1, -1)), right.reshape((1, -1))], axis=0)
             labels = labels.cpu().numpy()
-            pad_length = int(num_nodes - len(pred))
-            if pad_length > 0: pred = F.pad(pred, (0, pad_length), mode='constant')
-            pred = pred.cpu().numpy()
             res = dl.evaluate(edge_list, pred, labels)
             print(res)
             for k in res:
@@ -326,7 +256,6 @@ def run_model_DBLP(args):
         res_random[k] /= total
     print(res_2hop)
     print(res_random)
-    return res_2hop, res_random
 
 
 if __name__ == '__main__':
@@ -339,18 +268,18 @@ if __name__ == '__main__':
                          '3 - all id vec. Default is 2;' +
                          '4 - only term features (id vec for others);' +
                          '5 - only term features (zero vec for others).')
-    ap.add_argument('--hidden-dim', type=int, default=256, help='Dimension of the node hidden state. Default is 64.')
-    ap.add_argument('--num-heads', type=int, default=4, help='Number of the attention heads. Default is 8.')
-    ap.add_argument('--epoch', type=int, default=1, help='Number of epochs.')
+    ap.add_argument('--hidden-dim', type=int, default=64, help='Dimension of the node hidden state. Default is 64.')
+    ap.add_argument('--num-heads', type=int, default=2, help='Number of the attention heads. Default is 8.')
+    ap.add_argument('--epoch', type=int, default=300, help='Number of epochs.')
     ap.add_argument('--patience', type=int, default=40, help='Patience.')
     ap.add_argument('--num-layers', type=int, default=2)
-    ap.add_argument('--lr', type=float, default=0.01)
-    ap.add_argument('--dropout', type=float, default=0.3)
-    ap.add_argument('--weight-decay', type=float, default=0.001)
+    ap.add_argument('--lr', type=float, default=5e-4)
+    ap.add_argument('--dropout', type=float, default=0.5)
+    ap.add_argument('--weight-decay', type=float, default=1e-4)
     ap.add_argument('--slope', type=float, default=0.01)
     ap.add_argument('--dataset', type=str)
-    ap.add_argument('--edge-feats', type=int, default=64)
-    ap.add_argument('--batch-size', type=int, default=17000)
+    ap.add_argument('--edge-feats', type=int, default=32)
+    ap.add_argument('--batch-size', type=int, default=1024)
     ap.add_argument('--decoder', type=str, default='distmult')
     ap.add_argument('--run', type=int, default=1)
 
