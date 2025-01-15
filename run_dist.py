@@ -13,6 +13,7 @@ import numpy as np
 from utils.pytorchtools import EarlyStopping
 from utils.data import load_data
 from GNN import myGAT
+from seal.model import GCN
 import dgl
 import os
 
@@ -102,9 +103,14 @@ def run_model_DBLP(args):
         train_pos, valid_pos = dl.get_train_valid_pos()  # edge_types=[test_edge_type])
         num_classes = args.hidden_dim
         heads = [args.num_heads] * args.num_layers + [args.num_heads]
-        net = myGAT(g, args.edge_feats, len(dl.links['count']) * 2 + 1, in_dims, args.hidden_dim, num_classes,
-                    args.num_layers, heads, F.elu, args.dropout, args.dropout, args.slope, False, 0.,
-                    decode=args.decoder)
+        net = GCN(
+            num_layers=args.num_layers,
+            hidden_units=args.hidden_dim,
+            gcn_type="gcn",
+            pooling_type="sum",
+            dropout=args.dropout,
+            max_z=1000,
+        )
         net.to(device)
         optimizer = torch.optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -144,7 +150,15 @@ def run_model_DBLP(args):
             labels = torch.FloatTensor(
                 np.concatenate([np.ones(train_pos_head.shape[0]), np.zeros(train_neg_head.shape[0])])).to(device)
 
-            logits = net(features_list, e_feat, left, right, mid)
+            batch_nodes = np.unique(np.concatenate([left.astype(np.int64), right.astype(np.int64)]))
+            batch_g = dgl.node_subgraph(g, batch_nodes)
+
+            # 创建映射索引：从全图到子图
+            node_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(batch_nodes)}
+            batch_left = np.array([node_mapping[node] for node in left])
+            batch_right = np.array([node_mapping[node] for node in right])
+
+            logits = net(batch_g, labels, batch_left, batch_right, batch_nodes, node_id=None, edge_id=None)
             logp = F.sigmoid(logits)
             train_loss = loss_func(logp, labels)
 

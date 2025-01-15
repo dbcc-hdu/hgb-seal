@@ -103,7 +103,8 @@ class GCN(nn.Module):
         for layer in self.layers:
             layer.reset_parameters()
 
-    def forward(self, g, z, left_, right_, node_id=None, edge_id=None, mode=None):
+    # def forward(self, g, z, node_id=None, edge_id=None):
+    def forward(self, g, z, left, right, batch_nodes, node_id=None, edge_id=None, mode=None):
         """
         Args:
             g(DGLGraph): the graph
@@ -132,19 +133,20 @@ class GCN(nn.Module):
             n_emb = self.node_embedding(node_id)
             x = torch.cat([x, n_emb], 1)
 
-        pad_length = 0
-        if mode == 1: pad_length = 10100 - z.numel()
-        elif mode == 2: pad_length = 24784 - z.numel()
-        if pad_length != 0:
-            x = F.pad(x, (0, pad_length), "constant", 0)
+        x = x[batch_nodes]
+        # pad_length = 0
+        # if mode == 1: pad_length = 10100 - z.numel()
+        # elif mode == 2: pad_length = 24784 - z.numel()
+        # if pad_length != 0:
+        #     x = F.pad(x, (0, pad_length), "constant", 0)
         for layer in self.layers[:-1]:
             x = layer(g, x, edge_weight=edge_weight)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.layers[-1](g, x, edge_weight=edge_weight)
 
-        left_emb = x[left_]
-        right_emb = x[right_]
+        left_emb = x[left]
+        right_emb = x[right]
 
         scores = (left_emb * right_emb).sum(dim=1)
         # x = self.pooling(g, x)
