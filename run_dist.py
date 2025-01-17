@@ -150,15 +150,14 @@ def run_model_DBLP(args):
             labels = torch.FloatTensor(
                 np.concatenate([np.ones(train_pos_head.shape[0]), np.zeros(train_neg_head.shape[0])])).to(device)
 
-            batch_nodes = np.unique(np.concatenate([left.astype(np.int64), right.astype(np.int64)]))
+            batch_nodes = np.concatenate([train_pos_head.astype(np.int64), train_neg_head.astype(np.int64)])
             batch_g = dgl.node_subgraph(g, batch_nodes)
-
             # 创建映射索引：从全图到子图
             node_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(batch_nodes)}
-            batch_left = np.array([node_mapping[node] for node in left])
-            batch_right = np.array([node_mapping[node] for node in right])
+            batch_left = np.array([node_mapping[node] for node in train_pos_head])
+            batch_right = np.array([node_mapping[node] for node in train_neg_head])
 
-            logits = net(batch_g, labels, batch_left, batch_right, batch_nodes, node_id=None, edge_id=None)
+            logits = net(batch_g, labels, batch_left, batch_right, node_id=None, edge_id=None)
             logp = F.sigmoid(logits)
             train_loss = loss_func(logp, labels)
 
@@ -195,7 +194,15 @@ def run_model_DBLP(args):
                 mid = np.concatenate([valid_r_id, valid_r_id])
                 labels = torch.FloatTensor(
                     np.concatenate([np.ones(valid_pos_head.shape[0]), np.zeros(valid_neg_head.shape[0])])).to(device)
-                logits = net(features_list, e_feat, left, right, mid)
+
+                batch_nodes = np.concatenate([valid_pos_head.astype(np.int64), valid_neg_head.astype(np.int64)])
+                batch_g = dgl.node_subgraph(g, batch_nodes)
+                # 创建映射索引：从全图到子图
+                node_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(batch_nodes)}
+                batch_left = np.array([node_mapping[node] for node in valid_pos_head])
+                batch_right = np.array([node_mapping[node] for node in valid_neg_head])
+
+                logits = net(batch_g, labels, batch_left, batch_right, node_id=None, edge_id=None)
                 logp = F.sigmoid(logits)
                 val_loss = loss_func(logp, labels)
             t_end = time.time()
@@ -236,7 +243,16 @@ def run_model_DBLP(args):
             mid = np.zeros(left.shape[0], dtype=np.int32)
             mid[:] = test_edge_type
             labels = torch.FloatTensor(test_label).to(device)
-            logits = net(features_list, e_feat, left, right, mid)
+            labels = labels.repeat_interleave(2)
+
+            batch_nodes = np.concatenate([test_neigh[0], test_neigh[1]])
+            batch_g = dgl.node_subgraph(g, batch_nodes)
+            # 创建映射索引：从全图到子图
+            node_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(batch_nodes)}
+            batch_left = np.array([node_mapping[node] for node in test_neigh[0]])
+            batch_right = np.array([node_mapping[node] for node in test_neigh[1]])
+
+            logits = net(batch_g, labels, batch_left, batch_right, node_id=None, edge_id=None)
             pred = F.sigmoid(logits).cpu().numpy()
             edge_list = np.concatenate([left.reshape((1, -1)), right.reshape((1, -1))], axis=0)
             labels = labels.cpu().numpy()
@@ -256,7 +272,16 @@ def run_model_DBLP(args):
             mid = np.zeros(left.shape[0], dtype=np.int32)
             mid[:] = test_edge_type
             labels = torch.FloatTensor(test_label).to(device)
-            logits = net(features_list, e_feat, left, right, mid)
+            labels = labels.repeat_interleave(2)
+
+            batch_nodes = np.concatenate([test_neigh[0], test_neigh[1]])
+            batch_g = dgl.node_subgraph(g, batch_nodes)
+            # 创建映射索引：从全图到子图
+            node_mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(batch_nodes)}
+            batch_left = np.array([node_mapping[node] for node in test_neigh[0]])
+            batch_right = np.array([node_mapping[node] for node in test_neigh[1]])
+
+            logits = net(batch_g, labels, batch_left, batch_right, node_id=None, edge_id=None)
             pred = F.sigmoid(logits).cpu().numpy()
             edge_list = np.concatenate([left.reshape((1, -1)), right.reshape((1, -1))], axis=0)
             labels = labels.cpu().numpy()
@@ -283,11 +308,11 @@ if __name__ == '__main__':
                          '4 - only term features (id vec for others);' +
                          '5 - only term features (zero vec for others).')
     ap.add_argument('--hidden-dim', type=int, default=64, help='Dimension of the node hidden state. Default is 64.')
-    ap.add_argument('--num-heads', type=int, default=2, help='Number of the attention heads. Default is 8.')
+    ap.add_argument('--num-heads', type=int, default=8, help='Number of the attention heads. Default is 8.')
     ap.add_argument('--epoch', type=int, default=300, help='Number of epochs.')
     ap.add_argument('--patience', type=int, default=40, help='Patience.')
     ap.add_argument('--num-layers', type=int, default=2)
-    ap.add_argument('--lr', type=float, default=5e-4)
+    ap.add_argument('--lr', type=float, default=0.01)
     ap.add_argument('--dropout', type=float, default=0.5)
     ap.add_argument('--weight-decay', type=float, default=1e-4)
     ap.add_argument('--slope', type=float, default=0.01)

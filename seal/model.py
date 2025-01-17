@@ -104,7 +104,7 @@ class GCN(nn.Module):
             layer.reset_parameters()
 
     # def forward(self, g, z, node_id=None, edge_id=None):
-    def forward(self, g, z, left, right, batch_nodes, node_id=None, edge_id=None, mode=None):
+    def forward(self, g, z, left, right, node_id=None, edge_id=None, mode=None):
         """
         Args:
             g(DGLGraph): the graph
@@ -133,7 +133,6 @@ class GCN(nn.Module):
             n_emb = self.node_embedding(node_id)
             x = torch.cat([x, n_emb], 1)
 
-        x = x[batch_nodes]
         # pad_length = 0
         # if mode == 1: pad_length = 10100 - z.numel()
         # elif mode == 2: pad_length = 24784 - z.numel()
@@ -149,6 +148,7 @@ class GCN(nn.Module):
         right_emb = x[right]
 
         scores = (left_emb * right_emb).sum(dim=1)
+        scores = scores.repeat_interleave(2)
         # x = self.pooling(g, x)
         # x = F.relu(self.linear_1(x))
         # F.dropout(x, p=self.dropout, training=self.training)
